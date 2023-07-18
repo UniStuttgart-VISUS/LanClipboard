@@ -4,18 +4,15 @@ function Invoke-SdtpRequest {
         [string] $Server,
         [int] $Port,
         [string] $Path,
-
-        [ValidateSet("GET", "PUT")]
-        [string] $Method = "GET",
-
-        [object] $Body
+        [ValidateSet("GET", "PUT")] [string] $Method = "GET",
+        [byte[]] $Body,
+        [switch] $Raw
     )
 
     try {
         Write-Verbose "Connecting to $Server on port $Port ..."
         $connection = New-Object System.Net.Sockets.TcpClient($Server, $Port)
         $stream = $connection.GetStream();
-        $reader = New-Object System.IO.StreamReader($stream)
         $writer = New-Object System.IO.StreamWriter($stream)
         $writer.AutoFlush = $true
 
@@ -24,17 +21,33 @@ function Invoke-SdtpRequest {
 
         if ($Body) {
             Write-Verbose "Writing message body ..."
-            $writer.Write($Body.ToString())
+            $stream.Write($Body, 0, $Body.Length)
         }
 
         if ($Method -ieq "GET") {
-            Write-Verbose "Reading resoponse ..."
-            $retval = $reader.ReadToEnd()
+            if ($Raw) {
+                Write-Verbose "Reading binary response ..."
+                $ms = New-Object System.IO.MemoryStream
+                $stream.CopyTo($ms)
+                $retval = $ms.ToArray();
+                $msg = [System.Text.Encoding]::UTF8.GetString($retval)
 
-            if ($retval -imatch "SDTP-ERROR:.+") {
-                Write-Error $retval
+                if ($msg -imatch "^SDTP-ERROR:.+") {
+                    Write-Error $msg
+                } else {
+                    Write-Output $retval
+                }
+
             } else {
-                Write-Output $retval
+                Write-Verbose "Reading text response ..."
+                $reader = New-Object System.IO.StreamReader($stream)
+                $retval = $reader.ReadToEnd()
+
+                if ($retval -imatch "^SDTP-ERROR:.+") {
+                    Write-Error $retval
+                } else {
+                    Write-Output $retval
+                }
             }
         }
 
@@ -69,6 +82,10 @@ specified, the latest version is retrieved.
 .PARAMETER History
 The History switch retrieves the history information for the clipboard.
 
+.PARAMETER Raw
+The Raw switch instructs the cmdlet to perform a binary read on the of the
+output and returning a byte array.
+
 .PARAMETER Server
 The Server parameter specifies the host name or address of the server hosting
 the LAN clipboard. This parameter defaults to fex.rus.uni-stuttgart.de.
@@ -82,10 +99,6 @@ This cmdlet does not accept any inputs from the pipeline.
 
 .OUTPUTS
 The value in the clipboard.
-
-.ALIASES
-glcb
-lcbget
 
 .EXAMPLE
 Get-LanClipboard
@@ -101,6 +114,9 @@ Get-LanClipboard -Clipboard data2023 -History
 
 .EXAMPLE
 Get-LanClipboard -Clipboard data_2023 -Version 5 -Server fextest.rus.uni-stuttgart.de
+
+.EXAMPLE
+Get-LanClipboard -Raw | Add-Content -Path clipboard.bin -Encoding Byte
 #>
 function Get-LanClipboard {
     [CmdletBinding()]
@@ -116,6 +132,9 @@ function Get-LanClipboard {
         [switch] $History,
 
         [Parameter(ParameterSetName = "Get")]
+        [switch] $Raw,
+
+        [Parameter(ParameterSetName = "Get")]
         [Parameter(ParameterSetName = "History")]
         [string] $Server = "fex.rus.uni-stuttgart.de",
 
@@ -128,10 +147,10 @@ function Get-LanClipboard {
         Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard):q"
 
     } elseif ($Version) {
-        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard):$Version"
+        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard):$Version" -Raw:$Raw
 
     } else {
-        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard)"
+        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard)" -Raw:$Raw
     }
 }
 
@@ -143,13 +162,26 @@ Writes data to the LAN clipboard.
 .DESCRIPTION
 
 .PARAMETER Value
-The Value parameter specifies the object to be stored in the clipboard. Note
+The Value parameter specifies the data to be stored in the clipboard. Note
 that this value will be converted into its string representation.
+
+.PARAMETER Raw
+The Raw parameter specifies an array of binary data to be stored in the
+clipboard. No conversion will be performed on the bytes provided.
+
+.PARAMETER Path
+The Path parameter specifies the path to a file which of the content will be
+stored in the clipboard. The file will be read in binary mode and no conversion
+will be performed on its contents.
 
 .PARAMETER Clipboard
 The Clipboard parameter specifies the name of the clipboard to retrieve data
 from. If the name of the clipboard starts with "public_", the server does not
 enforce any access restrictions on the data. This parameter defaults to "_".
+
+.PARAMETER Encoding
+The Encoding parameter specifies the encoding for string-valued content passed
+via the Value parameter. This parameter defaults to UTF-8.
 
 .PARAMETER Server
 The Server parameter specifies the host name or address of the server hosting
@@ -165,10 +197,6 @@ The Value parameter is accepted via the pipeline.
 .OUTPUTS
 This cmdlet does not emit any outputs to the pipeline.
 
-.ALIASES
-slcb
-lcbput
-
 .EXAMPLE
 Set-LanClipboard foo
 
@@ -183,16 +211,35 @@ Set-LanClipboard -Value bar -Clipboard data_2023 -Server fextest.rus.uni-stuttga
 
 .EXAMPLE
 $env:COMPUTERNAME | Set-LanClipboard -Server fextest.rus.uni-stuttgart.de
+
+.EXAMPLE
+Set-LanClipboard -Value bar -Encoding ([System.Text.Encoding]::UTF32)
+
+.EXAMPLE
+Set-LanClipboard -Path image.png
+
+.EXAMPLE
+Set-LanClipboard -Raw (Get-Content -Path image.png -Encoding Byte)
 #>
 function Set-LanClipboard {
     [CmdletBinding()]
     param(
-        [Parameter(Position = 0, ValueFromPipeline = $true)]
-        [Object] $Value,
+        [Parameter(ParameterSetName = "String", Position = 0, ValueFromPipeline = $true)]
+        [string] $Value,
 
-        [Parameter(Position = 1)]
+        [Parameter(ParameterSetName = "Binary", Position = 0)]
+        [byte[]] $Raw,
+
+        [Parameter(ParameterSetName = "File", Position = 0)]
+        [string] $Path,
+
+        [Parameter(ParameterSetName = "String", Position = 1)]
+        [Parameter(ParameterSetName = "Binary", Position = 1)]
+        [Parameter(ParameterSetName = "File", Position = 1)]
         [string] $Clipboard = "_",
 
+        [Parameter(ParameterSetName = "String")]
+        [System.Text.Encoding] $Encoding = [System.Text.Encoding]::UTF8,
 
         [string] $Server = "fex.rus.uni-stuttgart.de",
         [int] $Port = 80
@@ -201,8 +248,17 @@ function Set-LanClipboard {
     begin { }
 
     process {
-        $Value | ForEach-Object {
-            Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$Clipboard" -Method PUT -Body $_
+        if ($Value) {
+            $Value | ForEach-Object {
+                Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$Clipboard" -Method PUT -Body $Encoding.GetBytes("$_")
+            }
+            
+        } elseif ($Data) {
+            Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$Clipboard" -Method PUT -Body $Data
+
+        } elseif ($Path) {
+            $data = Get-Content -Path $Path -Encoding Byte
+            Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$Clipboard" -Method PUT -Body $data
         }
     }
 
