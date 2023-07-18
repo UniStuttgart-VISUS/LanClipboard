@@ -4,7 +4,7 @@ function Invoke-SdtpRequest {
         [string] $Server,
         [int] $Port,
         [string] $Path,
-        [ValidateSet("GET", "PUT")] [string] $Method = "GET",
+        [ValidateSet("GET", "PUT", "DELETE")] [string] $Method = "GET",
         [byte[]] $Body,
         [switch] $Raw
     )
@@ -157,9 +157,70 @@ function Get-LanClipboard {
 
 <#
 .SYNOPSIS
+Deletes data from thh LAN clipboard.
+
+.DESCRIPTION
+Removes a whole clipboard and all of its version by name or deletes individual
+versions from a specific clipboard.
+
+.PARAMETER Clipboard
+The Clipboard parameter specifies the name of the clipboard to delete.
+
+.PARAMETER Version
+The Version parameter restricts the data to be deleted on a specific version.
+
+.PARAMETER Server
+The Server parameter specifies the host name or address of the server hosting
+the LAN clipboard. This parameter defaults to fex.rus.uni-stuttgart.de.
+
+.PARAMETER Port
+The Port parameter specifies the port on which the LAN clipboard is listening
+on. This parameter default to 80.
+
+.INPUTS
+This cmdlet does not accept any pipeline inputs.
+
+.OUTPUTS
+This cmdlet does not emit any outputs to the pipeline.
+
+.EXAMPLE
+Remove-LanClipboard foo
+
+.EXAMPLE
+Remove-LanClipboard data 1
+
+.EXAMPLE
+Remove-LanClipboard -Clipboard data -Version 1
+#>
+function Remove-LanClipboard {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string] $Clipboard,
+
+        [Parameter(Position = 1)]
+        [int] $Version,
+
+        [string] $Server = "fex.rus.uni-stuttgart.de",
+        [int] $Port = 80
+    )
+
+    if ($Version) {
+        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($Clipboard):$Version" -Method DELETE
+    } else {
+        Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$Clipboard" -Method DELETE
+    }
+}
+
+<#
+.SYNOPSIS
 Writes data to the LAN clipboard.
 
 .DESCRIPTION
+Connects to the FEX server and stores text or binary data to the LAN clipboard
+there. If a non-existing clipboard is specified, the server will implicitly
+create it. Pipeline will always be interpreted as text. Use the other parameter
+sets if other behaviour is desired.
 
 .PARAMETER Value
 The Value parameter specifies the data to be stored in the clipboard. Note
@@ -268,10 +329,13 @@ function Set-LanClipboard {
 
 # Export cmdlets that can be used by the end user.
 Export-ModuleMember -Function Get-LanClipboard
+Export-ModuleMember -Function Remove-LanClipboard
 Export-ModuleMember -Function Set-LanClipboard
 
 # Export aliases for the above cmdlets.
 New-Alias -Name glcb -Value Get-LanClipboard -Scope Global
 New-Alias -Name lcbget -Value Get-LanClipboard -Scope Global
+New-Alias -Name rlcb -Value Remove-LanClipboard -Scope Global
+New-Alias -Name lcbrm -Value Remove-LanClipboard -Scope Global
 New-Alias -Name slcb -Value Set-LanClipboard -Scope Global
 New-Alias -Name lcbput -Value Set-LanClipboard -Scope Global
