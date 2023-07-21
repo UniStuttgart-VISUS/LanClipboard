@@ -162,7 +162,41 @@ function Get-LanClipboard {
     process {
         $Clipboard | ForEach-Object {
             if ($History) {
-                Convert-Response -Data (Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($_):q") -Encoding ([System.Text.Encoding]::ASCII)
+                $clipboardName = $_
+                Write-Verbose "Retrieving history of clipboard `"$name`" ..."
+                $lines = Convert-Response -Data (Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($clipboardName):q") -Encoding ([System.Text.Encoding]::ASCII)
+                $lines = $lines.Split(@("`r`n", "`r", "`n"), [StringSplitOptions]::None)
+
+                Write-Verbose "Processing history of clipboard `"$clipboardName`" ..."
+                $lines | ForEach-Object {
+                    if ($_ -imatch "^\s*Item\s+$([regex]::Escape($clipboardName)):(\d+)$") {
+                        # We found a new entry. If we have an existing entry,
+                        # emit it to the pipeline. Afterwards, create a new
+                        # entry and add its basic properties, which are the
+                        # name of the clipboard and the version number.
+                        if ($item) {
+                            Write-Output $item
+                        }
+
+                        Write-Verbose "Found version $($Matches[1])."
+                        $item = New-Object -TypeName psobject
+                        $item | Add-Member -NotePropertyName Clipboard -NotePropertyValue $clipboardName
+                        $item | Add-Member -NotePropertyName Version -NotePropertyValue $Matches[1]
+
+                    } elseif ($item -and ($_ -imatch "^\s*([^:]+):\s*(.+)$")) {
+                        # This is an additional property for the current item,
+                        # so just add it to the object.
+                        $name = $Matches[1]
+                        $value = if ($name -ieq "Date") { [DateTime] $Matches[2] } else { $Matches[2] }
+                        $item | Add-Member -NotePropertyName $name -NotePropertyValue $value
+                    }
+                }
+
+                # Emit the last item which was not written on finding the begin
+                # of a new one.
+                if ($item) {
+                    Write-Output $item
+                }
 
             } elseif ($Version) {
                 Convert-Response -Data (Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($_):$Version") -Encoding $Encoding
