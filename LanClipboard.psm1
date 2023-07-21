@@ -132,6 +132,9 @@ Get-LanClipboard data_2023 5
 Get-LanClipboard -Clipboard data2023 -History
 
 .EXAMPLE
+Get-LanClipboard -Clipboard data2023, _ -History | Where-Object { $_.Date -lt [DateTime]::Today }
+
+.EXAMPLE
 Get-LanClipboard -Clipboard data_2023 -Version 5 -Server fextest.rus.uni-stuttgart.de
 
 .EXAMPLE
