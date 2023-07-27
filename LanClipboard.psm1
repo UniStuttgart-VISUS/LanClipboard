@@ -9,6 +9,22 @@ function Invoke-SdtpRequest {
     )
 
     try {
+        if (-not $Server) {
+            $Server = if ($env:LCB_SERVER) {
+                $env:LCB_SERVER
+            } else {
+                "fex.rus.uni-stuttgart.de"
+            }
+        }
+
+        if (-not $Port) {
+            $Port = if ($env:LCB_PORT) {
+                $env:LCB_PORT
+            } else {
+                80
+            }
+        }
+
         Write-Verbose "Connecting to $Server on port $Port ..."
         $connection = New-Object System.Net.Sockets.TcpClient($Server, $Port)
         $stream = $connection.GetStream();
@@ -69,14 +85,28 @@ function Invoke-SdtpRequest {
 function Convert-Response {
     param(
         [byte[]] $Data,
-        [System.Text.Encoding] $Encoding
+        [string] $Encoding
     )
 
-    if ($Encoding) {
-        Write-Output $Encoding.GetString($Data)
+    try {
+        $e = [System.Text.Encoding]::GetEncoding($Encoding)
+    } catch {
+        $e = $null
+    }
+
+    if ($e) {
+        Write-Verbose "Decode string using $Encoding ..."
+        Write-Output $e.GetString($Data)
     } else {
         Write-Output $Data
     }
+}
+
+
+# Helper for autocompletion of text encodings.
+$EncodingArgumentCompleter = {
+    param($command, $parameter, $text, $ast, $fake)
+    [System.Text.Encoding]::GetEncodings() | Where-Object { $_.Name -like "$text*" } | ForEach-Object { $_.Name }
 }
 
 
@@ -100,18 +130,20 @@ specified, the latest version is retrieved.
 .PARAMETER Encoding
 The Encoding parameter performs a string conversion of the incoming byte stream
 on demand. If this parameter is not set, the raw byte stream from the server
-will be emitted to the pipeline.
+(bytes) will be emitted to the pipeline.
 
 .PARAMETER History
 The History switch retrieves the history information for the clipboard.
 
 .PARAMETER Server
 The Server parameter specifies the host name or address of the server hosting
-the LAN clipboard. This parameter defaults to fex.rus.uni-stuttgart.de.
+the LAN clipboard. If this parameter is not specified, the LCB_SERVER
+environment variable or fex.rus.uni-stuttgart.de in this order of preference.
 
 .PARAMETER Port
 The Port parameter specifies the port on which the LAN clipboard is listening
-on. This parameter default to 80.
+on. If this parameter is not specified, the LCB_PORT environment variable or
+port 80 is used in this order of preference.
 
 .INPUTS
 You can pipe the names of the clipboards to retrieve to the cmdlet.
@@ -141,7 +173,7 @@ Get-LanClipboard -Clipboard data_2023 -Version 5 -Server fextest.rus.uni-stuttga
 "data_2022", "data_2023" | Get-LanClipboard
 
 .EXAMPLE
-Get-LanClipboard data_2023 -Encoding ([System.Text.Encoding]::UTF8)
+Get-LanClipboard data_2023 -Encoding UTF-8
 #>
 function Get-LanClipboard {
     [CmdletBinding()]
@@ -153,11 +185,11 @@ function Get-LanClipboard {
         [int] $Version,
 
         [Parameter(Position = 2)]
-        [System.Text.Encoding] $Encoding,
+        [string] $Encoding,
 
         [switch] $History,
-        [string] $Server = "fex.rus.uni-stuttgart.de",
-        [int] $Port = 80
+        [string] $Server,
+        [int] $Port
     )
 
     begin { }
@@ -167,7 +199,7 @@ function Get-LanClipboard {
             if ($History) {
                 $clipboardName = $_
                 Write-Verbose "Retrieving history of clipboard `"$name`" ..."
-                $lines = Convert-Response -Data (Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($clipboardName):q") -Encoding ([System.Text.Encoding]::ASCII)
+                $lines = Convert-Response -Data (Invoke-SdtpRequest -Server $Server -Port $Port -Path "/lcb/$($clipboardName):q") -Encoding us-ascii
                 $lines = $lines.Split(@("`r`n", "`r", "`n"), [StringSplitOptions]::None)
 
                 Write-Verbose "Processing history of clipboard `"$clipboardName`" ..."
@@ -230,11 +262,13 @@ The Version parameter restricts the data to be deleted on a specific version.
 
 .PARAMETER Server
 The Server parameter specifies the host name or address of the server hosting
-the LAN clipboard. This parameter defaults to fex.rus.uni-stuttgart.de.
+the LAN clipboard. If this parameter is not specified, the LCB_SERVER
+environment variable or fex.rus.uni-stuttgart.de in this order of preference.
 
 .PARAMETER Port
 The Port parameter specifies the port on which the LAN clipboard is listening
-on. This parameter default to 80.
+on. If this parameter is not specified, the LCB_PORT environment variable or
+port 80 is used in this order of preference.
 
 .INPUTS
 The cmdlet accepts the names of clipboards to remove as input.
@@ -260,8 +294,8 @@ function Remove-LanClipboard {
         [Parameter(Position = 1)]
         [int] $Version,
 
-        [string] $Server = "fex.rus.uni-stuttgart.de",
-        [int] $Port = 80
+        [string] $Server,
+        [int] $Port
     )
 
     begin { }
@@ -308,11 +342,13 @@ via the Value parameter. This parameter defaults to UTF-8.
 
 .PARAMETER Server
 The Server parameter specifies the host name or address of the server hosting
-the LAN clipboard. This parameter defaults to fex.rus.uni-stuttgart.de.
+the LAN clipboard. If this parameter is not specified, the LCB_SERVER
+environment variable or fex.rus.uni-stuttgart.de in this order of preference.
 
 .PARAMETER Port
 The Port parameter specifies the port on which the LAN clipboard is listening
-on. This parameter default to 80.
+on. If this parameter is not specified, the LCB_PORT environment variable or
+port 80 is used in this order of preference.
 
 .INPUTS
 The Value parameter is accepted via the pipeline.
@@ -341,17 +377,28 @@ function Set-LanClipboard {
         [Parameter(Position = 1)]
         [string] $Clipboard = "_",
 
-        [System.Text.Encoding] $Encoding,
+        [string] $Encoding,
 
-        [string] $Server = "fex.rus.uni-stuttgart.de",
-        [int] $Port = 80
+        [string] $Server,
+        [int] $Port
     )
 
     begin { }
 
     process {
         if ($Value) {
-            $data = if ($Encoding) { $Encoding.GetBytes("$Value") } else { [byte[]] $Value }
+            try {
+                $e = [System.Text.Encoding]::GetEncoding($Encoding)
+            } catch {
+                $e = if ($Value -is [string]) {
+                    Write-Verbose "Input value is a string, but no encoding is given."
+                    [System.Text.Encoding]::GetEncoding($OutputEncoding.BodyName)
+                } else {
+                    $null
+                }
+            }
+
+            $data = if ($e) { $e.GetBytes("$Value") } else { [byte[]] $Value }
         } elseif ($Path) {
             Write-Verbose "Reading raw data from `"$Path`" ..."
             $data = (Get-Content -Encoding byte $Path)
@@ -368,6 +415,10 @@ function Set-LanClipboard {
 Export-ModuleMember -Function Get-LanClipboard
 Export-ModuleMember -Function Remove-LanClipboard
 Export-ModuleMember -Function Set-LanClipboard
+
+# Register a completer for Encodings.
+Register-ArgumentCompleter -CommandName Get-LanClipboard -ParameterName Encoding -ScriptBlock $EncodingArgumentCompleter
+Register-ArgumentCompleter -CommandName Set-LanClipboard -ParameterName Encoding -ScriptBlock $EncodingArgumentCompleter
 
 # Export aliases for the above cmdlets.
 New-Alias -Name glcb -Value Get-LanClipboard -Scope Global
