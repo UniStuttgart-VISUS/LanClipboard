@@ -81,6 +81,31 @@ function Invoke-SdtpRequest {
 }
 
 
+# Helper function to encode requests.
+function Convert-Request {
+    param(
+        $Data,
+        [string] $Encoding
+    )
+
+    if ($Data -is [string]) {
+        try {
+            Write-Verbose "Input value is a string and encoding $Encoding is given."
+            $e = [System.Text.Encoding]::GetEncoding($Encoding)
+        } catch {
+            Write-Verbose "Input value is a string, but no encoding is given."
+            $e = [System.Text.Encoding]::GetEncoding($OutputEncoding.BodyName)
+        }
+    }
+
+    if ($e) {
+         return $e.GetBytes("$Data")
+    } else {
+         return $Data
+    }
+}
+
+
 # Helper function to interpret responses.
 function Convert-Response {
     param(
@@ -387,18 +412,7 @@ function Set-LanClipboard {
 
     process {
         if ($Value) {
-            try {
-                $e = [System.Text.Encoding]::GetEncoding($Encoding)
-            } catch {
-                $e = if ($Value -is [string]) {
-                    Write-Verbose "Input value is a string, but no encoding is given."
-                    [System.Text.Encoding]::GetEncoding($OutputEncoding.BodyName)
-                } else {
-                    $null
-                }
-            }
-
-            $data = if ($e) { $e.GetBytes("$Value") } else { [byte[]] $Value }
+            $data = Convert-Request -Data $Value -Encoding $Encoding
         } elseif ($Path) {
             Write-Verbose "Reading raw data from `"$Path`" ..."
             $data = (Get-Content -Encoding byte $Path)
